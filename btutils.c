@@ -3,7 +3,7 @@
 #include <time.h>
 #include <sys/types.h>
 
-#include "utils.h"
+#include "btutils.h"
 #include "libbzip2/bzlib.h"
 
 inline off_t offtin(u_char *buf) {
@@ -179,12 +179,12 @@ off_t getfiledata(const char *path, u_char **pdata) {
 	return ret;
 }
 
-int diff(const char* srcfile, const char* dstfile, const char* difffile)
+int btdiff(const char* srcfile, const char* dstfile, const char* difffile)
 {
 	off_t *I, *V;
 	u_char *old = 0, *new = 0;
 	off_t oldsize, newsize;
-	off_t scan = 0, pos, len = 0;
+	off_t scan = 0, pos = 0, len = 0;
 	off_t lastscan = 0, lastpos = 0, lastoffset = 0;
 	off_t oldscore, scsc;
 	off_t s, Sf, lenf, Sb, lenb, overlap, Ss, lens;
@@ -196,20 +196,19 @@ int diff(const char* srcfile, const char* dstfile, const char* difffile)
 	FILE *f;
 	BZFILE *pfbz2;
 	int bz2err;
-	clock_t t = clock();
 
 	if ((oldsize = getfiledata(srcfile, &old)) < 0) {
-		printf("read %s error!\n", srcfile);
+		print_log_ex("read %s error!\n", srcfile);
 		return 0;
 	}
 
 	if(!(I = malloc((oldsize + 1) * sizeof(off_t)))) {
-		printf("malloc memory for I error!\n");
+		print_log("malloc memory for I error!\n");
 		free(old);
 		return 0;
 	}
 	if (!(V = malloc((oldsize + 1) * sizeof(off_t)))) {
-		printf("malloc memory for V error!\n");
+		print_log("malloc memory for V error!\n");
 		free(I); free(old);
 		return 0;
 	}
@@ -218,31 +217,31 @@ int diff(const char* srcfile, const char* dstfile, const char* difffile)
 	free(V);
 
 	if ((newsize = getfiledata(dstfile, &new)) < 0) {
-		printf("read %s error!\n", dstfile);
+		print_log_ex("read %s error!\n", dstfile);
 		free(I); free(old);
 		return 0;
 	}
 
 	if(!(db = malloc(newsize + 1))) {
-		printf("malloc memory for db error!\n");
+		print_log("malloc memory for db error!\n");
 		free(new); free(I); free(old);
 		return 0;
 	}
 	if (!(eb = malloc(newsize + 1))) {
-		printf("malloc memory for eb error!\n");
+		print_log("malloc memory for eb error!\n");
 		free(db); free(new); free(I); free(old);
 		return 0;
 	}
 
 	/* Create the patch file */
 	if (!(f = fopen(difffile, "wb"))) {
-		printf("open %s error!\n", difffile);
+		print_log_ex("open %s error!\n", difffile);
 		free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
 
 	/* Header is
-		0	8	 "BSDIFF40"
+		0	8	 "DIFFBZIP"
 		8	8	length of bzip2ed ctrl block
 		16	8	length of bzip2ed diff block
 		24	8	length of new file */
@@ -251,19 +250,19 @@ int diff(const char* srcfile, const char* dstfile, const char* difffile)
 		32	??	Bzip2ed ctrl block
 		??	??	Bzip2ed diff block
 		??	??	Bzip2ed extra block */
-	memcpy(header,"BSDIFF40",8);
+	memcpy(header, "DIFFBZIP", 8);
 	offtout(0, header + 8);
 	offtout(0, header + 16);
 	offtout(newsize, header + 24);
 	if (fwrite(header, sizeof(u_char), 32, f) < 32) {
-		printf("fwrite(%s) error!\n", difffile);
+		print_log_ex("fwrite(%s) error!\n", difffile);
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
 
 	/* Compute the differences, writing ctrl as we go */
 	if (!(pfbz2 = BZ2_bzWriteOpen(&bz2err, f, 9, 0, 0))) {
-		printf("BZ2_bzWriteOpen error, bz2err = %d\n", bz2err);
+		print_log_ex("BZ2_bzWriteOpen error, bz2err = %d\n", bz2err);
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
@@ -321,7 +320,7 @@ int diff(const char* srcfile, const char* dstfile, const char* difffile)
 			offtout(lenf, buf);
 			BZ2_bzWrite(&bz2err, pfbz2, buf, 8);
 			if (bz2err != BZ_OK) {
-				printf("BZ2_bzWrite error, bz2err = %d\n", bz2err);
+				print_log_ex("BZ2_bzWrite error, bz2err = %d\n", bz2err);
 				BZ2_bzWriteClose(&bz2err, pfbz2, 0, NULL, NULL);
 				fclose(f); free(eb); free(db); free(new); free(I); free(old);
 				return 0;
@@ -330,7 +329,7 @@ int diff(const char* srcfile, const char* dstfile, const char* difffile)
 			offtout(scan - lenb - lastscan - lenf, buf);
 			BZ2_bzWrite(&bz2err, pfbz2, buf, 8);
 			if (bz2err != BZ_OK) {
-				printf("BZ2_bzWrite error, bz2err = %d\n", bz2err);
+				print_log_ex("BZ2_bzWrite error, bz2err = %d\n", bz2err);
 				BZ2_bzWriteClose(&bz2err, pfbz2, 0, NULL, NULL);
 				fclose(f); free(eb); free(db); free(new); free(I); free(old);
 				return 0;
@@ -339,7 +338,7 @@ int diff(const char* srcfile, const char* dstfile, const char* difffile)
 			offtout(pos - lenb - lastpos - lenf, buf);
 			BZ2_bzWrite(&bz2err, pfbz2, buf, 8);
 			if (bz2err != BZ_OK) {
-				printf("BZ2_bzWrite error, bz2err = %d\n", bz2err);
+				print_log_ex("BZ2_bzWrite error, bz2err = %d\n", bz2err);
 				BZ2_bzWriteClose(&bz2err, pfbz2, 0, NULL, NULL);
 				fclose(f); free(eb); free(db); free(new); free(I); free(old);
 				return 0;
@@ -352,14 +351,14 @@ int diff(const char* srcfile, const char* dstfile, const char* difffile)
 	}
 	BZ2_bzWriteClose(&bz2err, pfbz2, 0, NULL, NULL);
 	if (bz2err != BZ_OK) {
-		printf("BZ2_bzWriteClose error, bz2err = %d\n", bz2err);
+		print_log_ex("BZ2_bzWriteClose error, bz2err = %d\n", bz2err);
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
 
 	/* Compute size of compressed ctrl data */
 	if ((len = ftell(f)) < 0) {
-		printf("compute ctrl-block size error!\n");
+		print_log("compute ctrl-block size error!\n");
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
@@ -367,27 +366,27 @@ int diff(const char* srcfile, const char* dstfile, const char* difffile)
 
 	/* Write compressed diff data */
 	if (!(pfbz2 = BZ2_bzWriteOpen(&bz2err, f, 9, 0, 0))) {
-		printf("write diff-data error! %s\n", "bzWriteOpen()");
+		print_log_ex("write diff-data error! %s\n", "bzWriteOpen()");
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
 	BZ2_bzWrite(&bz2err, pfbz2, db, dblen);
 	if (bz2err != BZ_OK) {
-		printf("write diff-data error! %s\n", "bzWrite");
+		print_log_ex("write diff-data error! %s\n", "bzWrite");
 		BZ2_bzWriteClose(&bz2err, pfbz2, 0, NULL, NULL);
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
 	BZ2_bzWriteClose(&bz2err, pfbz2, 0, NULL, NULL);
 	if (bz2err != BZ_OK) {
-		printf("write diff-data error! %s\n", "bzWriteClose");
+		print_log_ex("write diff-data error! %s\n", "bzWriteClose");
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
 
 	/* Compute size of compressed diff data */
 	if ((newsize = ftell(f)) < 0) {
-		printf("compute diff-block size error!");
+		print_log("compute diff-block size error!");
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
@@ -395,20 +394,20 @@ int diff(const char* srcfile, const char* dstfile, const char* difffile)
 
 	/* Write compressed extra data */
 	if (!(pfbz2 = BZ2_bzWriteOpen(&bz2err, f, 9, 0, 0))) {
-		printf("write extra-data error! %s\n", "bzWriteOpen()");
+		print_log_ex("write extra-data error! %s\n", "bzWriteOpen()");
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
 	BZ2_bzWrite(&bz2err, pfbz2, eb, eblen);
 	if (bz2err != BZ_OK) {
-		printf("write extra-data error! %s\n", "bzWrite");
+		print_log_ex("write extra-data error! %s\n", "bzWrite");
 		BZ2_bzWriteClose(&bz2err, pfbz2, 0, NULL, NULL);
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
 	BZ2_bzWriteClose(&bz2err, pfbz2, 0, NULL, NULL);
 	if (bz2err != BZ_OK) {
-		printf("write extra-data error! %s\n", "bzWriteClose");
+		print_log_ex("write extra-data error! %s\n", "bzWriteClose");
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
@@ -416,20 +415,19 @@ int diff(const char* srcfile, const char* dstfile, const char* difffile)
 	len = ftell(f);
 	/* Seek to the beginning, write the header, and close the file */
 	if (fseek(f, 0, SEEK_SET) || fwrite(header, sizeof(u_char), 32, f) < 32) {
-		printf("write diff-header error!");
+		print_log("write diff-header error!");
 		fclose(f); free(eb); free(db); free(new); free(I); free(old);
 		return 0;
 	}
 
-	printf("generate diff-file success!   file-size: %d   cost time: %d ms", len, clock() - t);
 	if (fclose(f))
-		printf("Warning! Close diff-file error!");
+		print_log("Warning! Close diff-file error!");
 	free(eb); free(db); free(new); free(I); free(old);
 
 	return 1;
 }
 
-int patch(const char* srcfile, const char* dstfile, const char* difffile)
+int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 {
 	FILE *f, *cpf, *dpf, *epf;
 	BZFILE *cpfbz2, *dpfbz2, *epfbz2;
@@ -444,13 +442,13 @@ int patch(const char* srcfile, const char* dstfile, const char* difffile)
 
 	/* Open patch file */
 	if (!(f = fopen(difffile, "rb"))) {
-		printf("fopen(%s) error!", difffile);
+		print_log_ex("fopen(%s) error!", difffile);
 		return 0;
 	}
 
 	/*
 	File format:
-		0	8	"BSDIFF40"
+		0	8	"DIFFBZIP"
 		8	8	X
 		16	8	Y
 		24	8	sizeof(newfile)
@@ -464,14 +462,14 @@ int patch(const char* srcfile, const char* dstfile, const char* difffile)
 
 	/* Read header */
 	if (fread(header, sizeof(u_char), 32, f) < 32) {
-		printf("fread(%s) error!", difffile);
+		print_log_ex("fread(%s) error!", difffile);
 		fclose(f);
 		return 0;
 	}
 
 	/* Check for appropriate magic */
-	if (memcmp(header, "BSDIFF40", 8)) {
-		printf("Corrupt patch\n");
+	if (memcmp(header, "DIFFBZIP", 8)) {
+		print_log("Corrupt patch\n");
 		fclose(f);
 		return 0;
 	}
@@ -481,7 +479,7 @@ int patch(const char* srcfile, const char* dstfile, const char* difffile)
 	bzdatalen = offtin(header + 16);
 	newsize = offtin(header + 24);
 	if((bzctrllen < 0) || (bzdatalen < 0) || (newsize < 0)) {
-		printf("Corrupt patch\n");
+		print_log("Corrupt patch\n");
 		fclose(f);
 		return 0;
 	}
@@ -532,14 +530,14 @@ int patch(const char* srcfile, const char* dstfile, const char* difffile)
 	}
 
 	if ((oldsize = getfiledata(srcfile, &old)) < 0) {
-		printf("read %s error!", srcfile);
+		print_log_ex("read %s error!", srcfile);
 		BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
 		BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
 		BZ2_bzReadClose(&cbz2err, cpfbz2); fclose(cpf);
 		return 0;
 	}
 	if(!(new = malloc(newsize + 1))) {
-		printf("allocate memory for new error!");
+		print_log("allocate memory for new error!");
 		free(old);
 		BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
 		BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
@@ -554,7 +552,7 @@ int patch(const char* srcfile, const char* dstfile, const char* difffile)
 			lenread = BZ2_bzRead(&cbz2err, cpfbz2, buf, 8);
 			if ((lenread < 8) || ((cbz2err != BZ_OK) &&
 			    (cbz2err != BZ_STREAM_END))) {
-				printf("read control-block error!");
+				print_log("read control-block error!");
 				free(new); free(old);
 				BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
 				BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
@@ -566,7 +564,7 @@ int patch(const char* srcfile, const char* dstfile, const char* difffile)
 
 		/* Sanity-check */
 		if(newpos + ctrl[0] > newsize) {
-			printf("control-block(0) sanity-check error!");
+			print_log("control-block(0) sanity-check error!");
 			free(new); free(old);
 			BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
 			BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
@@ -578,7 +576,7 @@ int patch(const char* srcfile, const char* dstfile, const char* difffile)
 		lenread = BZ2_bzRead(&dbz2err, dpfbz2, new + newpos, ctrl[0]);
 		if ((lenread < ctrl[0]) ||
 		    ((dbz2err != BZ_OK) && (dbz2err != BZ_STREAM_END))) {
-			printf("read diff-block error!");
+			print_log("read diff-block error!");
 			free(new); free(old);
 			BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
 			BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
@@ -596,7 +594,7 @@ int patch(const char* srcfile, const char* dstfile, const char* difffile)
 
 		/* Sanity-check */
 		if(newpos + ctrl[1] > newsize) {
-			printf("control-block(1) sanity-check error!");
+			print_log("control-block(1) sanity-check error!");
 			free(new); free(old);
 			BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
 			BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
@@ -608,7 +606,7 @@ int patch(const char* srcfile, const char* dstfile, const char* difffile)
 		lenread = BZ2_bzRead(&ebz2err, epfbz2, new + newpos, ctrl[1]);
 		if ((lenread < ctrl[1]) ||
 		    ((ebz2err != BZ_OK) && (ebz2err != BZ_STREAM_END))) {
-			printf("read extra-block error!");
+			print_log("read extra-block error!");
 			free(new); free(old);
 			BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
 			BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
@@ -628,18 +626,18 @@ int patch(const char* srcfile, const char* dstfile, const char* difffile)
 
 	/* Write the new file */
 	if(!(f = fopen(dstfile, "wb"))) {
-		printf("write %s error!\n", dstfile);
+		print_log_ex("write %s error!\n", dstfile);
 		free(new);
 		return 0;
 	}
 	if(fwrite(new, sizeof(char), newsize, f) < newsize) {
-		printf("write %s error!\n", dstfile);
+		print_log_ex("write %s error!\n", dstfile);
 		fclose(f);
 		free(new);
 		return 0;
 	}
 	if(fclose(f))
-		printf("Warning! close %s error!", dstfile);
+		print_log_ex("Warning! close %s error!", dstfile);
 
 	free(new);
 	return 0;
