@@ -240,16 +240,17 @@ int btdiff(const char* srcfile, const char* dstfile, const char* difffile)
 		return 0;
 	}
 
-	/* Header is
+	/*  Header is
 		0	8	 "DIFFBZIP"
 		8	8	length of bzip2ed ctrl block
 		16	8	length of bzip2ed diff block
 		24	8	length of new file */
-	/* File is
+	/*  File is
 		0	32	Header
 		32	??	Bzip2ed ctrl block
 		??	??	Bzip2ed diff block
 		??	??	Bzip2ed extra block */
+
 	memcpy(header, "DIFFBZIP", 8);
 	offtout(0, header + 8);
 	offtout(0, header + 16);
@@ -432,13 +433,10 @@ int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 	FILE *f, *cpf, *dpf, *epf;
 	BZFILE *cpfbz2, *dpfbz2, *epfbz2;
 	int cbz2err, dbz2err, ebz2err;
-	ssize_t oldsize, newsize;
-	ssize_t bzctrllen, bzdatalen;
-	u_char header[32], buf[8];
-	u_char *old, *new;
-	off_t oldpos, newpos;
+	ssize_t oldsize, newsize, bzctrllen, bzdatalen;
+	u_char buf[32], *old, *new;
+	off_t i, oldpos, newpos;
 	off_t ctrl[3];
-	off_t lenread, i;
 
 	/* Open patch file */
 	if (!(f = fopen(difffile, "rb"))) {
@@ -446,8 +444,7 @@ int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 		return 0;
 	}
 
-	/*
-	File format:
+	/*  File format:
 		0	8	"DIFFBZIP"
 		8	8	X
 		16	8	Y
@@ -457,29 +454,28 @@ int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 		32+X+Y	???	bzip2(extra block)
 	with control block a set of triples (x,y,z) meaning "add x bytes
 	from oldfile to x bytes from the diff block; copy y bytes from the
-	extra block; seek forwards in oldfile by z bytes".
-	*/
+	extra block; seek forwards in oldfile by z bytes". */
 
 	/* Read header */
-	if (fread(header, sizeof(u_char), 32, f) < 32) {
+	if (fread(buf, sizeof(u_char), 32, f) < 32) {
 		print_log_ex("fread(%s) error!", difffile);
 		fclose(f);
 		return 0;
 	}
 
 	/* Check for appropriate magic */
-	if (memcmp(header, "DIFFBZIP", 8)) {
-		print_log("Corrupt patch\n");
+	if (memcmp(buf, "DIFFBZIP", 8)) {
+		print_log("Corrupt patch (tag)\n");
 		fclose(f);
 		return 0;
 	}
 
 	/* Read lengths from header */
-	bzctrllen = offtin(header + 8);
-	bzdatalen = offtin(header + 16);
-	newsize = offtin(header + 24);
+	bzctrllen = offtin(buf + 8);
+	bzdatalen = offtin(buf + 16);
+	newsize = offtin(buf + 24);
 	if((bzctrllen < 0) || (bzdatalen < 0) || (newsize < 0)) {
-		print_log("Corrupt patch\n");
+		print_log("Corrupt patch (data-length)\n");
 		fclose(f);
 		return 0;
 	}
@@ -548,19 +544,16 @@ int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 	oldpos = 0; newpos = 0;
 	while(newpos < newsize) {
 		/* Read control data */
-		for(i = 0; i <= 2; i++) {
-			lenread = BZ2_bzRead(&cbz2err, cpfbz2, buf, 8);
-			if ((lenread < 8) || ((cbz2err != BZ_OK) &&
-			    (cbz2err != BZ_STREAM_END))) {
-				print_log("read control-block error!");
-				free(new); free(old);
-				BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
-				BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
-				BZ2_bzReadClose(&cbz2err, cpfbz2); fclose(cpf);
-				return 0;
-			}
-			ctrl[i] = offtin(buf);
-		};
+		if ((BZ2_bzRead(&cbz2err, cpfbz2, buf, 24) < 24)
+			|| ((cbz2err != BZ_OK) && (cbz2err != BZ_STREAM_END))) {
+			print_log("read control-block error!");
+			free(new); free(old);
+			BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
+			BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
+			BZ2_bzReadClose(&cbz2err, cpfbz2); fclose(cpf);
+			return 0;
+		}
+		ctrl[0] = offtin(buf); ctrl[1] = offtin(buf + 8); ctrl[2] = offtin(buf + 16);
 
 		/* Sanity-check */
 		if(newpos + ctrl[0] > newsize) {
@@ -573,9 +566,8 @@ int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 		}
 
 		/* Read diff string */
-		lenread = BZ2_bzRead(&dbz2err, dpfbz2, new + newpos, ctrl[0]);
-		if ((lenread < ctrl[0]) ||
-		    ((dbz2err != BZ_OK) && (dbz2err != BZ_STREAM_END))) {
+		if ((BZ2_bzRead(&dbz2err, dpfbz2, new + newpos, ctrl[0]) < ctrl[0])
+			|| ((dbz2err != BZ_OK) && (dbz2err != BZ_STREAM_END))) {
 			print_log("read diff-block error!");
 			free(new); free(old);
 			BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
@@ -603,9 +595,8 @@ int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 		}
 
 		/* Read extra string */
-		lenread = BZ2_bzRead(&ebz2err, epfbz2, new + newpos, ctrl[1]);
-		if ((lenread < ctrl[1]) ||
-		    ((ebz2err != BZ_OK) && (ebz2err != BZ_STREAM_END))) {
+		if ((BZ2_bzRead(&ebz2err, epfbz2, new + newpos, ctrl[1]) < ctrl[1])
+			|| ((ebz2err != BZ_OK) && (ebz2err != BZ_STREAM_END))) {
 			print_log("read extra-block error!");
 			free(new); free(old);
 			BZ2_bzReadClose(&ebz2err, epfbz2); fclose(epf);
