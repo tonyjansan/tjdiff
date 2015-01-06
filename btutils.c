@@ -135,7 +135,7 @@ static off_t matchlength(u_char *old, off_t oldsize, u_char *new, off_t newsize)
 }
 
 static off_t search(off_t *I, u_char *old, off_t oldsize,
-    u_char *new, off_t newsize, off_t st, off_t en, off_t *pos) {
+	u_char *new, off_t newsize, off_t st, off_t en, off_t *pos) {
 	off_t x, y;
 	while(en - st > 1) {
 		x = st + ((en - st) >> 1);
@@ -158,25 +158,22 @@ static off_t search(off_t *I, u_char *old, off_t oldsize,
 
 // Notes: The method allocates memory for data, which should be free if unused.
 off_t getfiledata(const char *path, u_char **pdata) {
+	off_t size;
 	FILE *f = fopen(path, "rb");
-	if (!f)
-		return -1;
+	if (!f) return -1;
 
-	off_t size = getfilesize(f), ret = -1;
-	if (size >= 0) {
+	if ((size = getfilesize(f)) >= 0) {
 		/* Allocate size + 1 bytes instead of size bytes to ensure
 			that we never try to malloc(0) and get a NULL pointer */
-		*pdata = (u_char*)malloc(size + 1);
-		if (*pdata) {
-			ret = fread(*pdata, sizeof(u_char), size, f);
-			if (ret < size) {
-				free(*pdata); *pdata = 0;
-				ret = -1;
-			}
-		}
+		if ((*pdata = (u_char*)malloc(size + 1))) {
+			if (fread(*pdata, sizeof(u_char), size, f) < size) {
+				free(*pdata); // *pdata = 0;
+				size = -1;
+			} // else read success!
+		} else size = -1;
 	}
-	free(f);
-	return ret;
+	fclose(f);
+	return size;
 }
 
 int btdiff(const char* srcfile, const char* dstfile, const char* difffile)
@@ -191,8 +188,7 @@ int btdiff(const char* srcfile, const char* dstfile, const char* difffile)
 	off_t i;
 	off_t dblen = 0, eblen = 0;
 	u_char *db, *eb;
-	u_char buf[8];
-	u_char header[32];
+	u_char header[32], buf[8];
 	FILE *f;
 	BZFILE *pfbz2;
 	int bz2err;
@@ -241,7 +237,7 @@ int btdiff(const char* srcfile, const char* dstfile, const char* difffile)
 	}
 
 	/*  Header is
-		0	8	 "DIFFBZIP"
+		0	8	"DIFFBZIP"
 		8	8	length of bzip2ed ctrl block
 		16	8	length of bzip2ed diff block
 		24	8	length of new file */
@@ -445,13 +441,13 @@ int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 	}
 
 	/*  File format:
-		0	8	"DIFFBZIP"
-		8	8	X
-		16	8	Y
-		24	8	sizeof(newfile)
-		32	X	bzip2(control block)
-		32+X	Y	bzip2(diff block)
-		32+X+Y	???	bzip2(extra block)
+		0       8       "DIFFBZIP"
+		8       8       X
+		16      8       Y
+		24      8       sizeof(newfile)
+		32      X       bzip2(control block)
+		32+X    Y       bzip2(diff block)
+		32+X+Y  ???     bzip2(extra block)
 	with control block a set of triples (x,y,z) meaning "add x bytes
 	from oldfile to x bytes from the diff block; copy y bytes from the
 	extra block; seek forwards in oldfile by z bytes". */
@@ -481,15 +477,10 @@ int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 	}
 
 	/* Close patch file and re-open it via libbzip2 at the right places */
-	if (fclose(f))
+	if (fclose(f) || !(cpf = fopen(difffile, "rb")))
 		return 0;
-	if (!(cpf = fopen(difffile, "rb")))
-		return 0;
-	if (fseek(cpf, 32, SEEK_SET)) {
-		fclose(cpf);
-		return 0;
-	}
-	if (!(cpfbz2 = BZ2_bzReadOpen(&cbz2err, cpf, 0, 0, NULL, 0))) {
+	if (fseek(cpf, 32, SEEK_SET)
+		|| !(cpfbz2 = BZ2_bzReadOpen(&cbz2err, cpf, 0, 0, NULL, 0))) {
 		fclose(cpf);
 		return 0;
 	}
@@ -497,12 +488,8 @@ int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 		BZ2_bzReadClose(&cbz2err, cpfbz2); fclose(cpf);
 		return 0;
 	}
-	if (fseek(dpf, 32 + bzctrllen, SEEK_SET)) {
-		fclose(dpf);
-		BZ2_bzReadClose(&cbz2err, cpfbz2); fclose(cpf);
-		return 0;
-	}
-	if (!(dpfbz2 = BZ2_bzReadOpen(&dbz2err, dpf, 0, 0, NULL, 0))) {
+	if (fseek(dpf, 32 + bzctrllen, SEEK_SET)
+		|| !(dpfbz2 = BZ2_bzReadOpen(&dbz2err, dpf, 0, 0, NULL, 0))) {
 		fclose(dpf);
 		BZ2_bzReadClose(&cbz2err, cpfbz2); fclose(cpf);
 		return 0;
@@ -512,13 +499,8 @@ int btpatch(const char* srcfile, const char* dstfile, const char* difffile)
 		BZ2_bzReadClose(&cbz2err, cpfbz2); fclose(cpf);
 		return 0;
 	}
-	if (fseek(epf, 32 + bzctrllen + bzdatalen, SEEK_SET)) {
-		fclose(epf);
-		BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
-		BZ2_bzReadClose(&cbz2err, cpfbz2); fclose(cpf);
-		return 0;
-	}
-	if (!(epfbz2 = BZ2_bzReadOpen(&ebz2err, epf, 0, 0, NULL, 0))) {
+	if (fseek(epf, 32 + bzctrllen + bzdatalen, SEEK_SET)
+		|| !(epfbz2 = BZ2_bzReadOpen(&ebz2err, epf, 0, 0, NULL, 0))) {
 		fclose(epf);
 		BZ2_bzReadClose(&dbz2err, dpfbz2); fclose(dpf);
 		BZ2_bzReadClose(&cbz2err, cpfbz2); fclose(cpf);
