@@ -283,8 +283,7 @@ int btdiff(const char* srcfile, const char* dstfile, const char* difffile) {
                 lenf += lens - overlap;
                 lenb -= lens;
             }
-            for (i = 0; i < lenf; i++)
-                db[dblen + i] = new[lastscan + i] - old[lastpos + i];
+            for (i = 0; i < lenf; i++) db[dblen + i] = new[lastscan + i] - old[lastpos + i];
             memcpy(eb + eblen, new + lastscan + lenf, scan - lenb - lastscan - lenf);
             dblen += lenf;
             eblen += scan - lenb - lastscan - lenf;
